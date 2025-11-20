@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.DS_Store
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data
+data/raw/*
+data/processed/*
+!data/.gitkeep
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# VSCode / IDE
+.vscode/
+.idea/
