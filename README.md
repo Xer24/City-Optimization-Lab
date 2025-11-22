@@ -55,7 +55,7 @@ streamlit run app/streamlit_app.py
 ## 📊 Features
 
 ### ✔ Initial Milestone
-- Basic city grid representation
+- Basic city grid representation, with RNG roads
 - Prototyping traffic + energy models
 - Initial ML clustering pipeline
 - Database schema for scenarios and runs
