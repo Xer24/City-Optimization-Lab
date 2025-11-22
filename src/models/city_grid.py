@@ -6,6 +6,7 @@ methods for interacting with the grid.
 from typing import Tuple, Iterable, Optional
 import random
 import networkx as nx
+import matplotlib.pyplot as plt
 
 class CityGrid:
     def __init__(self, 
@@ -44,6 +45,9 @@ class CityGrid:
 
     def __repr__(self) -> str:
         return f"CityGrid(width={self.width}, height={self.height}, diagonal = {self.diagonal})"
+
+    def visualize(self) -> None:
+        self.plot_city()
 #Helpers
 
     def _build_grid_graph(self) -> nx.Graph: #build the underlying grind
@@ -87,11 +91,11 @@ class CityGrid:
         return G
     
     def init_block_zoning(self) -> None:
-        zones = ("residential", "commercial", "industrial")
-        zone_colors = {
-            "residential": "tab:blue",
-            "commercial": "tab:green",
-            "industrial": "tab:red",
+        self.zones = ("residential", "commercial", "industrial")
+        self.zone_colors = {
+            "residential": "darkviolet",
+            "commercial": "darkgreen",
+            "industrial": "darkred",
         }
 
         nodes = list(self.graph.nodes)
@@ -101,7 +105,7 @@ class CityGrid:
         if total_nodes == 0:
             return
 
-        avg_patch_size = max(1, total_nodes // (len(zones) * self.patches_per_zone))
+        avg_patch_size = max(1, total_nodes // (len(self.zones) * self.patches_per_zone))
 
         unassigned = set(nodes)
         zoning = {}
@@ -125,7 +129,7 @@ class CityGrid:
                             break
 
         # --- create patches ---
-        for zone in zones:
+        for zone in self.zones:
             for _ in range(self.patches_per_zone):
                 if not unassigned:
                     break
@@ -147,14 +151,14 @@ class CityGrid:
             if neighbor_zones:
                 zone = self.rng.choice(list(neighbor_zones))
             else:
-                zone = self.rng.choice(zones)
+                zone = self.rng.choice(self.zones)
 
             zoning[node] = zone
 
         # --- write zoning + colors ---
         for node, zone in zoning.items():
             self.graph.nodes[node]["zoning"] = zone
-            self.graph.nodes[node]["color"] = zone_colors[zone]
+            self.graph.nodes[node]["color"] = self.zone_colors[zone]
 
     def _init_random_node_attributes(self) -> None:
         #Attach random attributes to nodes -> Population, zoning, density
@@ -164,7 +168,6 @@ class CityGrid:
         for node in self.graph.nodes:
             population = self.rng.randint(pop_min, pop_max)
             density = self.rng.uniform(dens_min, dens_max)
-            zone = self.graph.nodes[node].get("zoning", "residential")
 
             #baseline energy deamnd using population and density
             baseline_energy = population * density * self.rng.uniform(0.5,1.5)
@@ -209,3 +212,66 @@ class CityGrid:
         largest = max(components, key = len)
         G_largest = G.subgraph(largest).copy()
         return G_largest
+# Legit just make graph look prettier method
+    def plot_city(self, figsize = (8,8)) -> None:
+        G = self.graph
+        pos = nx.get_node_attributes(G, "pos")
+        fig, ax = plt.subplots(figsize = figsize)
+        
+        
+        
+        bg = "#4A6DE5"
+        
+        ax.set_facecolor(bg)
+        fig.patch.set_facecolor(bg)
+
+
+        #remove ticks
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_axis_off()
+
+        road_edges = [(u, v) for u, v in G.edges if G.edges[u, v].get("kind") == "road"]
+        diag_edges = [(u, v) for u, v in G.edges if G.edges[u, v].get("kind") == "diag"]
+
+        nx.draw_networkx_edges(
+            G,
+            pos,
+            ax = ax,
+            edgelist = road_edges if road_edges else None,
+            width = 3.0,
+            edge_color = "#B8C6F0",
+            alpha = 0.95
+        )
+
+        if diag_edges:
+            nx.draw_networkx_edges(
+                G,
+                pos,
+                ax=ax,
+                edgelist=diag_edges,
+                width=1.8,
+                edge_color="#A3B4E8",
+                alpha=0.8,
+                style="solid",
+            )
+
+        node_colors = []
+        for n in G.nodes:
+            zone = G.nodes[n].get("zoning","residential")
+            color = self.zone_colors.get(zone, "tab:gray")
+            node_colors.append(color)
+        nx.draw_networkx_nodes(
+            G,
+            pos,
+            ax = ax,
+            node_color = node_colors,
+            node_size = 95,
+            edgecolors = "#e4d5b7",
+            linewidths = 0.35,
+            alpha = 0.95
+
+        )
+        plt.tight_layout()
+        plt.show()
+            
