@@ -1,6 +1,5 @@
 import matplotlib.pyplot as plt
 import networkx as nx
-
 from models.city_grid import CityGrid
   # adjust path if your file is named differently
 
@@ -11,7 +10,7 @@ def main():
     height=10,
     spacing=1.0,
     diagonal=False,
-    seed=42,
+    seed=44,
     edge_keep=0.9,
     diag_keep=None,
     population_range=(0, 500),  # MUST be a tuple
@@ -29,10 +28,15 @@ def main():
     some_edge = next(iter(city.graph.edges))
     print("Edge", some_edge, "attrs:", city.graph.edges[some_edge])
 
-    pos = nx.get_node_attributes(city.graph, "pos")
+    G = city.graph
+    pos = nx.get_node_attributes(G, "pos")
 
-    nx.draw(city.graph, pos, with_labels=True, node_size=200, font_size=8)
-    plt.gca().set_aspect("equal", adjustable="box")
+    node_colors_attr = nx.get_node_attributes(G, "color")
+    colors = [node_colors_attr.get(node, "tab:gray") for node in G.nodes]
+    missing = [n for n in G.nodes if "color" not in G.nodes[n]]
+    print("Nodes missing color:", missing)
+    nx.draw(G, pos, node_color=colors, node_size=200, with_labels=False)
+    plt.gca().set_aspect("equal", adjustable="box")  # optional but nice
     plt.show()
 
 if __name__ == "__main__":

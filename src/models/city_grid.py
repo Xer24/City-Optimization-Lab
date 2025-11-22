@@ -9,16 +9,17 @@ import networkx as nx
 
 class CityGrid:
     def __init__(self, 
-    width: int = 10, 
-    height: int = 10,
+    width: int = 20, 
+    height: int = 20,
     spacing: float = 1 ,
     diagonal: bool = False,
     *,
     seed: Optional[int] = None,
     edge_keep: float = 0.9,#probability that edge exists
     diag_keep: Optional[float] = None,
-    population_range: Tuple[int, int] = (0.500), #weights
-    density_range: Tuple[float, float] = (0.1, 1.0)):
+    population_range: Tuple[int, int] = (0,500), #weights
+    density_range: Tuple[float, float] = (0.1, 1.0),
+    patches_per_zone: int = 3): #blocks per zone
         self.width = width
         self.height = height
         self.spacing = spacing
@@ -29,6 +30,7 @@ class CityGrid:
         self.diag_keep = edge_keep if diag_keep is None else diag_keep
         self.population_range = population_range
         self.density_range = density_range
+        self.patches_per_zone = patches_per_zone
         self.rng = random.Random(seed)
 
         #Build Graph
@@ -36,6 +38,7 @@ class CityGrid:
         G = self._remove_isolated_nodes(G)
         G = self.keep_component(G)
         self.graph: nx.Graph = G
+        self.init_block_zoning()
         self._init_random_node_attributes()
         self._init_random_edge_attributes()
 
@@ -83,29 +86,91 @@ class CityGrid:
                             G.add_edge(node, (r+1, c-1), kind = "diag")
         return G
     
+    def init_block_zoning(self) -> None:
+        zones = ("residential", "commercial", "industrial")
+        zone_colors = {
+            "residential": "tab:blue",
+            "commercial": "tab:green",
+            "industrial": "tab:red",
+        }
+
+        nodes = list(self.graph.nodes)
+        self.rng.shuffle(nodes)
+
+        total_nodes = len(nodes)
+        if total_nodes == 0:
+            return
+
+        avg_patch_size = max(1, total_nodes // (len(zones) * self.patches_per_zone))
+
+        unassigned = set(nodes)
+        zoning = {}
+
+        # --- helper ---
+        def grow_patch(seed_node, zone_label, target_size):
+            queue = [seed_node]
+            zoning[seed_node] = zone_label
+            unassigned.discard(seed_node)
+            size = 1
+
+            while queue and size < target_size and unassigned:
+                current = queue.pop(0)
+                for nbr in self.graph.neighbors(current):
+                    if nbr in unassigned:
+                        zoning[nbr] = zone_label
+                        unassigned.discard(nbr)
+                        queue.append(nbr)
+                        size += 1
+                        if size >= target_size:
+                            break
+
+        # --- create patches ---
+        for zone in zones:
+            for _ in range(self.patches_per_zone):
+                if not unassigned:
+                    break
+
+                seed = self.rng.choice(list(unassigned))
+                size_factor = self.rng.uniform(0.7, 1.3)
+                target = max(1, int(avg_patch_size * size_factor))
+
+                grow_patch(seed, zone, target)
+
+        # --- fill leftover nodes ---
+        while unassigned:
+            node = unassigned.pop()
+            neighbor_zones = {
+                zoning[n]
+                for n in self.graph.neighbors(node)
+                if n in zoning
+            }
+            if neighbor_zones:
+                zone = self.rng.choice(list(neighbor_zones))
+            else:
+                zone = self.rng.choice(zones)
+
+            zoning[node] = zone
+
+        # --- write zoning + colors ---
+        for node, zone in zoning.items():
+            self.graph.nodes[node]["zoning"] = zone
+            self.graph.nodes[node]["color"] = zone_colors[zone]
+
     def _init_random_node_attributes(self) -> None:
         #Attach random attributes to nodes -> Population, zoning, density
-        zoning_cat: Iterable[str] = (
-            "residential",
-            "commercial",
-            "industrial",
-            "mixed",
-        )
-
         pop_min, pop_max = self.population_range
         dens_min, dens_max = self.density_range
 
         for node in self.graph.nodes:
             population = self.rng.randint(pop_min, pop_max)
             density = self.rng.uniform(dens_min, dens_max)
-            zoning = self.rng.choice(tuple(zoning_cat))
+            zone = self.graph.nodes[node].get("zoning", "residential")
 
             #baseline energy deamnd using population and density
             baseline_energy = population * density * self.rng.uniform(0.5,1.5)
 
             self.graph.nodes[node]["population"] = population #setting attributes
             self.graph.nodes[node]["density"] = density
-            self.graph.nodes[node]["zoning"] = zoning
             self.graph.nodes[node]["baseline_energy"] = baseline_energy
 
     def _init_random_edge_attributes(self) -> None: #arrow is return type annotation
@@ -119,6 +184,7 @@ class CityGrid:
             self.graph.edges[u,v]["travel_time"] = travel_time
             self.graph.edges[u,v]["capacity"] = capacity
     
+
     # Ease of life methods
 
     def node_position(self, row: int, col:int) -> Tuple[float, float]:
