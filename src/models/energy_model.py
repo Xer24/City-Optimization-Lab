@@ -150,4 +150,24 @@ class EnergyModel:
             plt.show()
 
         return grid
+# Helper
+    def daily_grid(self) -> np.ndarray:
+        #return grid of total energy per node over 24 hours
+        height = getattr(self.city, "height", None)
+        width = getattr(self.city, "width", None)
+        if height is None or width is None:
+            raise ValueError("City Grid must have a height and width")
+        
+        grid = np.zeros((height,width), dtype = float)
+
+        for node, data in self.graph.nodes(data = True):
+            row = data.get("row")
+            col = data.get("col")
+            if row is None or col is None:
+                continue
+            total = 0.0
+            for hour in range(24):
+                total += self.node_demand(node, hour)
+            grid[row, col] = total
+        return grid 
 

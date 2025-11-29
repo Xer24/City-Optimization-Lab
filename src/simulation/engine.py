@@ -19,10 +19,9 @@ class SimulationEngine:
     def step(self, *, plot: bool = False):
         #run one tick = 24hrs of the simulation
         total_demand_by_hour = self.energy.simulate_day(range(24)) #compute 24hr demand
-        heatmap_grid = self.energy.plot_heatmap(show = plot) #compute spatial distribution
 
         #Later: evolve city for next tick (population, zoning etc etc)
 
         self.tick += 1
 
-        return total_demand_by_hour, heatmap_grid
+        return total_demand_by_hour

@@ -46,8 +46,8 @@ class CityGrid:
     def __repr__(self) -> str:
         return f"CityGrid(width={self.width}, height={self.height}, diagonal = {self.diagonal})"
 
-    def visualize(self) -> None:
-        self.plot_city()
+    def visualize(self, ax = None, show = True) -> None:
+        self.plot_city(ax = ax, show = show)
 #Helpers
 
     def _build_grid_graph(self) -> nx.Graph: #build the underlying grind
@@ -213,17 +213,21 @@ class CityGrid:
         G_largest = G.subgraph(largest).copy()
         return G_largest
 # Legit just make graph look prettier method
-    def plot_city(self, figsize = (8,8)) -> None:
+    def plot_city(self, ax = None, show = True, figsize = (8,8)) -> None:
         G = self.graph
         pos = nx.get_node_attributes(G, "pos")
-        fig, ax = plt.subplots(figsize = figsize)
+
+        created_fig = False
+        if ax is None:
+            fig, ax = plt.subplots(figsize = figsize)
+            created_fig = True
         
         
         
         bg = "#4A6DE5"
-        
         ax.set_facecolor(bg)
-        fig.patch.set_facecolor(bg)
+        if created_fig:
+            fig.patch.set_facecolor(bg)
 
 
         #remove ticks
@@ -272,6 +276,7 @@ class CityGrid:
             alpha = 0.95
 
         )
-        plt.tight_layout()
-        plt.show()
+        if created_fig and show:
+            plt.tight_layout()
+            plt.show()
             

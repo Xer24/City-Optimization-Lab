@@ -1,3 +1,4 @@
+import matplotlib.pyplot as plt
 from models.city_grid import CityGrid
 from simulation.engine import SimulationEngine
 
@@ -16,32 +17,45 @@ def main():
         density_range=(0.1, 1.0),
     )
 
-    # Basic debug info
     print(city)
     print("Nodes:", city.graph.number_of_nodes())
     print("Edges:", city.graph.number_of_edges())
 
-    some_node = (0, 0)
-    print("Node (0,0) attrs:", city.graph.nodes[some_node])
-
-    some_edge = next(iter(city.graph.edges))
-    print("Edge", some_edge, "attrs:", city.graph.edges[some_edge])
-
-    # Optional: visualize the city layout once at the start
-    city.visualize()
-
-    # Set up the simulation engine (handles ticks + energy model)
+    # Set up simulation
     sim = SimulationEngine(city)
 
-    # Run a few ticks (each tick = one 24-hour cycle)
+    # Create figure with two subplots: left = city, right = heatmap
+    fig, (ax_city, ax_heat) = plt.subplots(1, 2, figsize=(12, 6))
+
+    # Draw static city layout on the left
+    city.visualize(ax=ax_city, show=False)
+
+    # Initial heatmap grid (for tick 0)
+    initial_grid = sim.energy.daily_grid()
+    im = ax_heat.imshow(initial_grid, origin="lower", aspect="equal")
+    cbar = plt.colorbar(im, ax=ax_heat)
+    cbar.set_label("Energy (sum over 24 hrs)")
+    ax_heat.set_title("Tick 0")
+
+    plt.tight_layout()
+    plt.pause(0.1)  # draw once
+
+    # Animate over ticks
     num_ticks = 3
     for _ in range(num_ticks):
-        total_demand_by_hour, heatmap_grid = sim.step(plot=True)
+        totals = sim.step()  # advances tick, recomputes 24h demand
 
-        print(f"\n=== Tick {sim.tick} ===")
-        print("Total city demand by hour:", total_demand_by_hour)
-        print("Total daily demand (sum over 24h):",
-              total_demand_by_hour.sum())
+        # recompute daily grid based on updated state
+        grid = sim.energy.daily_grid()
+        im.set_data(grid)  # update heatmap image
+
+        ax_heat.set_title(f"Tick {sim.tick}")
+        print(f"Tick {sim.tick}: total daily demand = {totals.sum():.2f}")
+
+        plt.pause(0.7)  # pause so you can see it update
+
+    # keep window open at the end
+    plt.show()
 
 
 if __name__ == "__main__":
