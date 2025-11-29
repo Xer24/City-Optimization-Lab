@@ -7,6 +7,7 @@ from typing import Tuple, Iterable, Optional
 import random
 import networkx as nx
 import matplotlib.pyplot as plt
+import numpy as np
 
 class CityGrid:
     def __init__(self, 
@@ -46,8 +47,8 @@ class CityGrid:
     def __repr__(self) -> str:
         return f"CityGrid(width={self.width}, height={self.height}, diagonal = {self.diagonal})"
 
-    def visualize(self, ax = None, show = True) -> None:
-        self.plot_city(ax = ax, show = show)
+    def visualize(self, ax = None, show = True, edge_flows = None) -> None:
+        self.plot_city(ax = ax, show = show, edge_flows = edge_flows)
 #Helpers
 
     def _build_grid_graph(self) -> nx.Graph: #build the underlying grind
@@ -213,7 +214,7 @@ class CityGrid:
         G_largest = G.subgraph(largest).copy()
         return G_largest
 # Legit just make graph look prettier method
-    def plot_city(self, ax = None, show = True, figsize = (8,8)) -> None:
+    def plot_city(self, ax = None, show = True, figsize = (8,8), edge_flows = None) -> None:
         G = self.graph
         pos = nx.get_node_attributes(G, "pos")
 
@@ -238,15 +239,61 @@ class CityGrid:
         road_edges = [(u, v) for u, v in G.edges if G.edges[u, v].get("kind") == "road"]
         diag_edges = [(u, v) for u, v in G.edges if G.edges[u, v].get("kind") == "diag"]
 
-        nx.draw_networkx_edges(
-            G,
-            pos,
-            ax = ax,
-            edgelist = road_edges if road_edges else None,
-            width = 3.0,
-            edge_color = "#B8C6F0",
-            alpha = 0.95
-        )
+        if edge_flows is None or not road_edges:
+            nx.draw_networkx_edges(
+                G,
+                pos,
+                ax = ax,
+                edgelist = road_edges if road_edges else None,
+                width = 3.0,
+                edge_color = "#B8C6F0",
+                alpha = 0.95
+            )
+        else:
+            #build flow array aligned w road_edges
+            flows = []
+            for (u,v) in road_edges:
+                f = edge_flows.get((u, v), edge_flows.get((v, u), 0.0))
+                flows.append(f)
+            flows = np.array(flows, dtype=float)
+            
+            max_flow = float(flows.max()) if flows.size > 0 else 0.0
+
+            if max_flow <= 0:
+                nx.draw_networkx_edges(
+                G,
+                pos,
+                ax = ax,
+                edgelist = road_edges if road_edges else None,
+                width = 3.0,
+                edge_color = "#B8C6F0",
+                alpha = 0.95
+                )
+            else:
+                norm = flows/ max_flow
+                widths = 1.8 + 5.0 * norm
+
+                #draw roads colored by flow
+                edge_collection = nx.draw_networkx_edges(
+                    G,
+                    pos,
+                    ax = ax,
+                    edgelist = road_edges,
+                    width = widths,
+                    edge_color = flows,
+                    edge_cmap = plt.cm.inferno,
+                    edge_vmin = 0.0,
+                    edge_vmax = max_flow,
+                    alpha = 0.95,
+
+                )
+                #colorbar for flows -> commented out cause its being weird rn
+                #cbar = plt.colorbar(edge_collection, ax=ax, fraction=0.046, pad=0.04)
+                #cbar.set_label("Traffic flow (relative)", color="white")
+                #cbar.ax.yaxis.set_tick_params(color="white")
+                #for label in cbar.ax.get_yticklabels():
+                #    label.set_color("white")
+
 
         if diag_edges:
             nx.draw_networkx_edges(
