@@ -1,21 +1,26 @@
 import matplotlib.pyplot as plt
+
+from config import Sim_Config          # 🔹 NEW: central config
 from models.city_grid import CityGrid
 from simulation.engine import SimulationEngine
 from models.traffic_model import TrafficModel  
 
 
 def main():
-    # Create a 10x10 city grid
+    cfg = Sim_Config  # shorter alias
+
+    # Create a city grid using values from the config
     city = CityGrid(
-        width=10,
-        height=10,
-        spacing=1.0,
-        diagonal=False,
-        seed=44,
-        edge_keep=0.9,
-        diag_keep=None,
-        population_range=(0, 500),
-        density_range=(0.1, 1.0),
+        width=cfg.grid.width,
+        height=cfg.grid.height,
+        spacing=cfg.grid.spacing,
+        diagonal=cfg.grid.diagonal,
+        seed=cfg.seed,                          # global RNG seed
+        edge_keep=cfg.grid.edge_keep,
+        diag_keep=cfg.grid.diag_keep,
+        population_range=cfg.grid.population_range,
+        density_range=cfg.grid.density_range,
+        clusters_per_zone=cfg.grid.clusters_per_zone,
     )
 
     print(city)
@@ -33,7 +38,11 @@ def main():
     # Initial traffic based on current city state
     traffic_model = TrafficModel(
         grid=city,
-        trips_per_person=0.4,  # adjust to increase/decrease traffic
+        trips_per_person=cfg.traffic.trips_per_person,  # from config instead of 0.4
+        # If you want to wire weights as well, uncomment and make sure names match:
+        # commerical_weight=cfg.traffic.commercial_weight,
+        # industrail_weight=cfg.traffic.industrial_weight,
+        # residential_weight=cfg.traffic.residential_weight,
     )
     edge_flows = traffic_model.run_static_assignment()
 
@@ -51,7 +60,8 @@ def main():
     plt.pause(0.1)  # initial draw
 
     # ----- Animate over ticks -----
-    num_ticks = 3
+    num_ticks = 3  # you *could* also move this into SIM_CONFIG if you want later
+
     for _ in range(num_ticks):
         # Advance simulation (this will usually update city / energy)
         totals = sim.step()
@@ -59,7 +69,11 @@ def main():
         # Recompute traffic for updated city state
         traffic_model = TrafficModel(
             grid=city,
-            trips_per_person=0.4,
+            trips_per_person=cfg.traffic.trips_per_person,
+            # same comment as above if you want weights:
+            # commerical_weight=cfg.traffic.commercial_weight,
+            # industrail_weight=cfg.traffic.industrial_weight,
+            # residential_weight=cfg.traffic.residential_weight,
         )
         edge_flows = traffic_model.run_static_assignment()
 

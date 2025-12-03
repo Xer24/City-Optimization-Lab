@@ -21,7 +21,7 @@ class CityGrid:
     diag_keep: Optional[float] = None,
     population_range: Tuple[int, int] = (0,500), #weights
     density_range: Tuple[float, float] = (0.1, 1.0),
-    patches_per_zone: int = 3): #blocks per zone
+    clusters_per_zone: int = 3): #blocks per zone
         self.width = width
         self.height = height
         self.spacing = spacing
@@ -32,7 +32,7 @@ class CityGrid:
         self.diag_keep = edge_keep if diag_keep is None else diag_keep
         self.population_range = population_range
         self.density_range = density_range
-        self.patches_per_zone = patches_per_zone
+        self.clusters_per_zone = clusters_per_zone
         self.rng = random.Random(seed)
 
         #Build Graph
@@ -106,7 +106,7 @@ class CityGrid:
         if total_nodes == 0:
             return
 
-        avg_patch_size = max(1, total_nodes // (len(self.zones) * self.patches_per_zone))
+        avg_patch_size = max(1, total_nodes // (len(self.zones) * self.clusters_per_zone))
 
         unassigned = set(nodes)
         zoning = {}
@@ -128,10 +128,8 @@ class CityGrid:
                         size += 1
                         if size >= target_size:
                             break
-
-        # --- create patches ---
         for zone in self.zones:
-            for _ in range(self.patches_per_zone):
+            for _ in range(self.clusters_per_zone):
                 if not unassigned:
                     break
 
@@ -140,8 +138,6 @@ class CityGrid:
                 target = max(1, int(avg_patch_size * size_factor))
 
                 grow_patch(seed, zone, target)
-
-        # --- fill leftover nodes ---
         while unassigned:
             node = unassigned.pop()
             neighbor_zones = {
