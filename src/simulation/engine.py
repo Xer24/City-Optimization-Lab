@@ -6,6 +6,8 @@ Coordinates traffic, energy, and other submodels over time.
 from models.traffic_model import TrafficModel
 from models.city_grid import CityGrid
 from models.energy_model import EnergyModel
+from config import Sim_Config as cfg
+
 
 class SimulationEngine:
     # Controls time progression (ticks)
@@ -13,7 +15,9 @@ class SimulationEngine:
     def __init__(self, city: CityGrid):
         self.city = city
         #self.traffic_model = TrafficModel(city_grid)
-        self.energy = EnergyModel(city)
+        self.energy = EnergyModel(city = city,
+        noise_std = cfg.energy.noise_std,
+    rng_seed =cfg.seed + cfg.energy.rng_offset)
         self.tick = 0
     
     def step(self, *, plot: bool = False):

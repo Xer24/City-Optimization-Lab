@@ -4,6 +4,7 @@ from typing import Dict, Tuple, Hashable
 
 import networkx as nx
 from models.city_grid import CityGrid
+import random
 
 Edge = Tuple[Hashable, Hashable]
 
@@ -15,12 +16,15 @@ class TrafficModel:
     commercial_weight: float = 3.0
     industrial_weight: float = 2.0
     residential_weight: float = 1.0
+    rng_seed: int|None = None
+    trip_var_std: float = 0.02
 
     edge_flows: Dict[Edge, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        G = self.grid.graph
+        G = self.grid.graph        
         self.edge_flows = {edge: 0.0 for edge in G.edges}
+        self.rng = random.Random(self.rng_seed)
 
     def run_static_assignment(self) -> Dict[Edge, float]:
         G = self.grid.graph
@@ -47,7 +51,7 @@ class TrafficModel:
                 total_w = float(len(destinations))
 
             probs = [w / total_w for w in weights]
-            dest = destinations[max(range(len(destinations)), key=lambda i: probs[i])]
+            dest = self.rng.choices(destinations, weights=probs, k=1)[0]
 
             path = all_paths.get(origin, {}).get(dest)
             if path is None or len(path) < 2:
@@ -63,7 +67,11 @@ class TrafficModel:
         trips_out = {}
         for node, data in G.nodes(data=True):
             pop = data.get("population", 0)
-            trips_out[node] = pop * self.trips_per_person
+            
+            base = pop * self.trips_per_person
+            noise = self.rng.gauss(1.0, self.trip_var_std)
+
+            trips_out[node] = max(base * noise, 0.0) #basically says no negatives
         return trips_out
 
     def compute_destination_weights(self) -> Dict[Hashable, float]:

@@ -19,6 +19,10 @@ class GridConfig:
 @dataclass
 class TrafficConfig:
     trips_per_person: float = 0.3
+    trip_var_std: float = 0.02
+
+    rng_offset: int = 10 # ensures traffic model RNG is not the same as the cities
+
     commercial_weight: float = 3.0
     industrial_weight: float = 2.0
     residential_weight: float = 1.0
@@ -31,6 +35,7 @@ class EnergyConfig:
     peak_hour: int = 10
     peak_multiplier: float = 1.7
     noise_std: float = 0.1
+    rng_offset: int = 20
 
 @dataclass
 class SimulationConfig:

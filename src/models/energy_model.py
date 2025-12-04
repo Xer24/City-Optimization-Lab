@@ -13,6 +13,7 @@ from typing import Dict, Hashable, Optional, Iterable
 
 
 import numpy as np
+import random
 import matplotlib.pyplot as plt
 Node = Hashable #mean any object that is hashable
 
@@ -58,7 +59,9 @@ class EnergyModel:
     *,
     profiles: Optional[Dict[str, DemandProfile]] = None, #optional parameter
     population_scale: float = 0.5,
-    density_scale: float = 0.8, 
+    density_scale: float = 0.8,
+    noise_std: float = 0.1,
+    rng_seed: int | None = None
     ):
         self.city = city
         self.graph = city.graph
@@ -68,6 +71,10 @@ class EnergyModel:
         pops = [float(data.get("population",0.0))
         for _, data in self.graph.nodes(data = True)] #compuate avg pop for scaling
         self.avg_pop = np.mean(pops) if len(pops) > 0 else 1.0
+        self.noise_std = float(noise_std)
+        self.rng = random.Random(rng_seed)
+
+
     
     def node_demand(self, node: Node, hour: int) -> float:
         #computer energy demand for a single node at a given hour
@@ -85,8 +92,11 @@ class EnergyModel:
         else:
             pop_factor = 1.0 
         density_factor = 1.0 + self.density_scale * density #Density term
+        
+        demand = baseline * zone_factor * pop_factor * density_factor
+        noise = self.rng.gauss(1.0, self.noise_std)
 
-        return baseline * zone_factor * pop_factor * density_factor #energy equation per hour
+        return demand * max(noise, 0.1)  #randomized energy equation per hour
     
     def city_demand(self, hour: int) -> float:
         #city demand per hour
