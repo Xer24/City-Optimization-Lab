@@ -1,1 +1,0 @@
-"""Database schema definitions using SQLAlchemy (to be implemented)."""
