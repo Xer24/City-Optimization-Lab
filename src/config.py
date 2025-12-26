@@ -26,6 +26,9 @@ class TrafficConfig:
     commercial_weight: float = 3.0
     industrial_weight: float = 2.0
     residential_weight: float = 1.0
+    trips_per_step: float = 5000
+    gravity_alpha: float = 5.0
+    gravity_beta: float = 1.5
 
 @dataclass
 class EnergyConfig:
