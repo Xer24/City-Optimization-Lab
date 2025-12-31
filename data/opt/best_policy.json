@@ -1,0 +1,47 @@
+{
+  "best_score": 693842.6749926991,
+  "best_policy": {
+    "transit_frequency_mult": 0.9511146958415914,
+    "congestion_toll": 3.713462833625428,
+    "road_capacity_scale": 0.8058731374240283
+  },
+  "best_metrics": {
+    "avg_travel_time": 514.515734622854,
+    "total_energy": 2766009.4085103837,
+    "mean_congestion": 170.22607208069283,
+    "congestion_p95": 1436.392906026553,
+    "total_emissions": 0.0,
+    "failed": 0
+  },
+  "policy_bounds": {
+    "transit_frequency_mult": [
+      0.7,
+      1.5
+    ],
+    "congestion_toll": [
+      0.0,
+      5.0
+    ],
+    "road_capacity_scale": [
+      0.8,
+      1.2
+    ]
+  },
+  "opt_config": {
+    "n_trials": 200,
+    "seed": 42,
+    "local_refine_steps": 60,
+    "local_sigma": 0.06,
+    "eval_repeats": 1,
+    "num_ticks": 6
+  },
+  "objective_config": {
+    "w_time": 1.0,
+    "w_energy": 0.25,
+    "w_mean_cong": 0.6,
+    "w_p95_cong": 1.2,
+    "w_emissions": 0.0,
+    "fail_penalty": 1000000.0
+  },
+  "saved_utc": "2025-12-31T03:17:23.867108+00:00"
+}

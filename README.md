@@ -1,75 +1,87 @@
-# City Optimization Lab
+Optimization Experiments
+Problem formulation
 
-A modular urban simulation and optimization environment built in Python for exploring how population, zoning, transit infrastructure, and energy constraints shape the behavior of a city. The project integrates simulation, optimization, machine learning, and data visualization as a unified analytical pipeline.
+We frame urban traffic management as a simulation-based optimization problem.
+The goal is to select policy parameters that minimize a weighted objective combining congestion and energy usage.
 
-## 🌆 Project Summary
+Decision variables
 
-City Optimization Lab is a configurable environment where users can:
+Transit frequency multiplier
 
-- Adjust **population growth**, **zoning**, and **transit routes**
-- Simulate **traffic flow**, **energy demand**, and **grid load**
-- Run **optimization routines** (min traffic congestion, min energy cost)
-- Cluster the city into functional **zones** using ML
-- Visualize results through **heatmaps**, **energy curves**, and **city maps**
+Congestion toll level
 
-This project demonstrates applied data science, operations research, and system modeling in an urban-analytics context.
+Road capacity scaling factor
 
-## 🧰 Tech Stack
+Objective
+A weighted sum of:
 
-**Python (primary)**
-- NumPy, Pandas, SciPy
-- scikit-learn
-- PuLP / Pyomo (optimization)
-- Matplotlib & Plotly
-- Streamlit (UI)
-- SQLAlchemy (database layer)
+system travel-time proxy
 
-**SQL**
-- SQLite (local development)
-- PostgreSQL (optional "production" mode)
+total energy usage
 
-**MATLAB**
-- Optimization Toolbox for benchmarking
-- Additional prototypes stored in `matlab_benchmarks/`
+mean congestion
 
-## 🚀 Usage
+peak (95th percentile) congestion
 
-### 1. Install dependencies
+Lower objective values indicate better overall system performance.
 
-```bash
-pip install -r requirements.txt
-```
+Method
 
-### 2. Run the core simulation
+Policies are evaluated by running a multi-modal city simulation over multiple ticks.
 
-```bash
-python src/main.py
-```
+A random search with local refinement explores the policy space.
 
-### 3. Launch the Streamlit app
+Each trial logs policy parameters and resulting performance metrics.
 
-```bash
-streamlit run app/streamlit_app.py
-```
+The best policy is selected based on minimum objective value.
 
-## 📊 Features
+Performance is validated against a neutral baseline policy under identical conditions.
 
-### ✔ Initial Milestone
-- Basic city grid representation, with RNG roads
-- Prototyping traffic + energy models
-- Initial ML clustering pipeline
-- Database schema for scenarios and runs
+Results
 
-### 🔧 In Progress
-- Full 24-hour simulation loop
-- Optimization engine (LP and MIP versions)
-- Visualization dashboard
+The optimizer consistently finds policies that outperform the baseline.
 
-### 🌐 Future Extensions
-- Multi-objective optimization (Pareto frontier)
-- Transit routing solver with OR-Tools
-- Stochastic demand models
+Key diagnostics:
 
-## 📫 Contact
+Best-so-far curve shows monotonic improvement over trials.
 
-Project maintained by **Mikail Durrani**.
+Score histogram confirms a meaningful spread of policy quality.
+
+Policy knob vs score plots reveal interpretable relationships between controls and outcomes.
+
+Artifacts:
+
+data/opt/analysis/best_so_far.png
+
+data/opt/analysis/score_hist.png
+
+data/opt/analysis/knobs/
+
+The optimized policy achieves lower congestion and energy usage than baseline across evaluation runs.
+
+Reproducibility
+
+To reproduce results:
+
+# run optimization
+PYTHONPATH=src python src/optimization/optimizer.py
+
+# analyze results
+python src/optimization/analyze_runs.py
+
+# evaluate baseline vs best
+PYTHONPATH=src python src/optimization/evaluate_policy.py
+
+
+All optimization data and plots are saved under data/opt/.
+
+Notes
+
+This framework is intentionally modular.
+Machine learning surrogates can be added later to accelerate policy search, but are not required for optimization correctness.
+
+3️⃣ One-paragraph project summary (for applications / portfolio)
+
+Use this anywhere (resume bullets, project description, GitHub):
+
+Built a simulation-based optimization framework for urban traffic systems. Policies controlling transit frequency, congestion pricing, and road capacity were optimized using black-box search over a multi-modal city simulation. Results were validated against a neutral baseline, showing consistent reductions in congestion and energy usage. The system logs structured policy–outcome data and produces diagnostic plots for interpretability and future ML integration.
