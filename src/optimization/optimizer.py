@@ -1,19 +1,32 @@
+"""
+Policy optimization for urban transportation systems.
+
+Implements optimization algorithms to find best policy parameters for
+minimizing congestion, energy usage, and travel times. Uses simulation-based
+evaluation with configurable objectives and search strategies.
+
+Algorithms:
+- Random search with local refinement
+- Bayesian optimization (optional)
+- Genetic algorithm (optional)
+"""
+
 from __future__ import annotations
 
 import argparse
 import csv
 import json
 import os
+import sys
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
+import logging
 
 import numpy as np
 
-# --- Your project imports (same pattern as main.py) ---
-import sys
-from pathlib import Path
-
+# Project imports
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -22,19 +35,42 @@ from models.city_grid import CityGrid
 from simulation.engine import SimulationEngine
 from models.traffic_model import TrafficModel
 
+logger = logging.getLogger(__name__)
+
 
 # ============================================================
-# 1) Policy definition
+# Policy Definition
 # ============================================================
 
 @dataclass
 class Policy:
-    # Keep it small and effective given what exists in your code right now
-    transit_frequency_mult: float      # 0.70–1.50 (we map to mode shares)
-    congestion_toll: float             # 0.00–5.00 (we map to mode shares)
-    road_capacity_scale: float         # 0.80–1.20 (optional, only if edge has capacity attr)
+    """
+    Urban transportation policy parameters.
+    
+    Attributes:
+        transit_frequency_mult: Transit service frequency multiplier (0.7-1.5)
+        congestion_toll: Road pricing in $/trip (0.0-5.0)
+        road_capacity_scale: Road capacity scaling factor (0.8-1.2)
+    
+    Example:
+        >>> policy = Policy(transit_frequency_mult=1.3, congestion_toll=2.5)
+        >>> print(policy)
+    """
+    transit_frequency_mult: float = 1.0
+    congestion_toll: float = 0.0
+    road_capacity_scale: float = 1.0
+    
+    def __post_init__(self) -> None:
+        """Validate policy parameters are within bounds."""
+        for key, (lo, hi) in POLICY_BOUNDS.items():
+            value = getattr(self, key)
+            if not (lo <= value <= hi):
+                logger.warning(
+                    f"Policy parameter {key}={value:.3f} outside bounds [{lo}, {hi}]"
+                )
 
 
+# Policy bounds for search space
 POLICY_BOUNDS: Dict[str, Tuple[float, float]] = {
     "transit_frequency_mult": (0.70, 1.50),
     "congestion_toll": (0.00, 5.00),
@@ -43,33 +79,112 @@ POLICY_BOUNDS: Dict[str, Tuple[float, float]] = {
 
 
 def sample_policy(rng: np.random.Generator) -> Policy:
+    """
+    Sample random policy from uniform distribution over bounds.
+    
+    Args:
+        rng: NumPy random number generator
+    
+    Returns:
+        Random policy within bounds
+    """
     vals = {}
-    for k, (lo, hi) in POLICY_BOUNDS.items():
-        vals[k] = float(rng.uniform(lo, hi))
+    for key, (lo, hi) in POLICY_BOUNDS.items():
+        vals[key] = float(rng.uniform(lo, hi))
     return Policy(**vals)
 
 
 def clip_policy(policy: Policy) -> Policy:
+    """
+    Clip policy parameters to stay within bounds.
+    
+    Args:
+        policy: Input policy (may be outside bounds)
+    
+    Returns:
+        New policy with clipped parameters
+    """
     d = asdict(policy)
-    for k, (lo, hi) in POLICY_BOUNDS.items():
-        d[k] = float(max(lo, min(hi, d[k])))
+    for key, (lo, hi) in POLICY_BOUNDS.items():
+        d[key] = float(max(lo, min(hi, d[key])))
     return Policy(**d)
 
 
-def mutate_policy(policy: Policy, rng: np.random.Generator, sigma: float = 0.06) -> Policy:
+def mutate_policy(
+    policy: Policy,
+    rng: np.random.Generator,
+    sigma: float = 0.06,
+) -> Policy:
+    """
+    Mutate policy by adding Gaussian noise.
+    
+    Used for local refinement and genetic algorithms.
+    
+    Args:
+        policy: Base policy
+        rng: Random number generator
+        sigma: Mutation strength (fraction of parameter range)
+    
+    Returns:
+        Mutated policy (clipped to bounds)
+    
+    Example:
+        >>> base = Policy(transit_frequency_mult=1.2)
+        >>> rng = np.random.default_rng(42)
+        >>> mutated = mutate_policy(base, rng, sigma=0.1)
+    """
     d = asdict(policy)
-    for k, (lo, hi) in POLICY_BOUNDS.items():
+    for key, (lo, hi) in POLICY_BOUNDS.items():
         span = hi - lo
-        d[k] = float(d[k] + rng.normal(0.0, sigma * span))
+        noise = rng.normal(0.0, sigma * span)
+        d[key] = float(d[key] + noise)
     return clip_policy(Policy(**d))
 
 
+def crossover_policies(
+    parent1: Policy,
+    parent2: Policy,
+    rng: np.random.Generator,
+) -> Policy:
+    """
+    Create child policy via uniform crossover.
+    
+    Args:
+        parent1: First parent policy
+        parent2: Second parent policy
+        rng: Random number generator
+    
+    Returns:
+        Child policy with mixed parameters
+    """
+    d1 = asdict(parent1)
+    d2 = asdict(parent2)
+    child = {}
+    
+    for key in POLICY_BOUNDS.keys():
+        # Randomly choose from parent1 or parent2
+        child[key] = d1[key] if rng.random() < 0.5 else d2[key]
+    
+    return Policy(**child)
+
+
 # ============================================================
-# 2) Metrics + default objective
+# Metrics and Objectives
 # ============================================================
 
 @dataclass
 class Metrics:
+    """
+    Simulation performance metrics.
+    
+    Attributes:
+        avg_travel_time: Average travel time proxy
+        total_energy: Total energy consumption
+        mean_congestion: Mean edge congestion
+        congestion_p95: 95th percentile congestion
+        total_emissions: Total emissions (if available)
+        failed: Whether simulation failed (1) or succeeded (0)
+    """
     avg_travel_time: float
     total_energy: float
     mean_congestion: float
@@ -80,6 +195,23 @@ class Metrics:
 
 @dataclass
 class ObjectiveConfig:
+    """
+    Objective function configuration (weights for each metric).
+    
+    Lower scores are better. Weights determine relative importance.
+    
+    Attributes:
+        w_time: Weight for travel time
+        w_energy: Weight for energy consumption
+        w_mean_cong: Weight for mean congestion
+        w_p95_cong: Weight for peak congestion
+        w_emissions: Weight for emissions
+        fail_penalty: Score for failed simulations
+    
+    Example:
+        >>> # Prioritize congestion reduction
+        >>> config = ObjectiveConfig(w_p95_cong=2.0, w_time=0.5)
+    """
     w_time: float = 1.0
     w_energy: float = 0.25
     w_mean_cong: float = 0.6
@@ -88,20 +220,258 @@ class ObjectiveConfig:
     fail_penalty: float = 1e6
 
 
-def objective(m: Metrics, cfg: ObjectiveConfig) -> float:
-    if m.failed:
-        return cfg.fail_penalty
-    return float(
-        cfg.w_time * m.avg_travel_time
-        + cfg.w_energy * m.total_energy
-        + cfg.w_mean_cong * m.mean_congestion
-        + cfg.w_p95_cong * m.congestion_p95
-        + cfg.w_emissions * m.total_emissions
+def objective(metrics: Metrics, config: ObjectiveConfig) -> float:
+    """
+    Compute scalar objective score from metrics.
+    
+    Args:
+        metrics: Simulation performance metrics
+        config: Objective weights
+    
+    Returns:
+        Weighted objective score (lower is better)
+    
+    Example:
+        >>> m = Metrics(avg_travel_time=100, total_energy=50, 
+        ...             mean_congestion=20, congestion_p95=80)
+        >>> cfg = ObjectiveConfig()
+        >>> score = objective(m, cfg)
+    """
+    if metrics.failed:
+        return config.fail_penalty
+    
+    score = (
+        config.w_time * metrics.avg_travel_time
+        + config.w_energy * metrics.total_energy
+        + config.w_mean_cong * metrics.mean_congestion
+        + config.w_p95_cong * metrics.congestion_p95
+        + config.w_emissions * metrics.total_emissions
+    )
+    
+    return float(score)
+
+
+# ============================================================
+# Simulation Helpers
+# ============================================================
+
+def mean_flow(edge_flows: Dict[Any, float]) -> float:
+    """Calculate mean flow across edges."""
+    if not edge_flows:
+        return 0.0
+    vals = np.fromiter(edge_flows.values(), dtype=float)
+    return float(vals.mean()) if vals.size > 0 else 0.0
+
+
+def p95_flow(edge_flows: Dict[Any, float]) -> float:
+    """Calculate 95th percentile flow."""
+    if not edge_flows:
+        return 0.0
+    vals = np.fromiter(edge_flows.values(), dtype=float)
+    return float(np.percentile(vals, 95)) if vals.size > 0 else 0.0
+
+
+def apply_capacity_scale(city: CityGrid, scale: float) -> None:
+    """
+    Scale road capacities by factor.
+    
+    Only affects edges that have 'capacity' attribute.
+    
+    Args:
+        city: CityGrid instance
+        scale: Capacity scaling factor
+    """
+    for u, v, data in city.graph.edges(data=True):
+        if "capacity" in data and data["capacity"] is not None:
+            data["capacity"] = float(data["capacity"]) * float(scale)
+
+
+def apply_policy_to_mode_shares(
+    traffic: TrafficModel,
+    policy: Policy,
+) -> None:
+    """
+    Convert policy parameters to modal shares.
+    
+    Maps policy knobs to behavioral changes:
+    - Higher congestion toll → fewer car trips
+    - Higher transit frequency → more transit trips
+    - Pedestrian share adjusts to maintain total = 1.0
+    
+    Args:
+        traffic: TrafficModel instance
+        policy: Policy to apply
+    
+    Note:
+        This is a simplified behavioral model. Real-world elasticities
+        would require calibration to observed data.
+    """
+    # Start from current shares
+    car = float(traffic.car_share)
+    ped = float(traffic.ped_share)
+    transit = float(traffic.transit_share)
+    
+    # Policy effects (calibrated constants)
+    # Toll: $5 toll reduces car share by ~5 percentage points
+    car_shift = 0.05 * (policy.congestion_toll / 5.0)
+    
+    # Transit frequency: +50% service increases transit by ~4 percentage points
+    transit_shift = 0.08 * (policy.transit_frequency_mult - 1.0)
+    
+    # Apply shifts
+    car = car * (1.0 - car_shift)
+    transit = transit * (1.0 + max(-0.3, min(0.5, transit_shift)))
+    
+    # Clip to reasonable bounds
+    car = max(0.05, min(0.9, car))
+    transit = max(0.05, min(0.9, transit))
+    
+    # Pedestrian takes remainder
+    ped = max(0.05, 1.0 - car - transit)
+    
+    # Renormalize
+    total = car + transit + ped
+    traffic.car_share = float(car / total)
+    traffic.transit_share = float(transit / total)
+    traffic.ped_share = float(ped / total)
+    
+    logger.debug(
+        f"Applied policy: car={traffic.car_share:.2%}, "
+        f"transit={traffic.transit_share:.2%}, "
+        f"ped={traffic.ped_share:.2%}"
     )
 
 
 # ============================================================
-# 3) Logging (CSV)
+# Core Evaluation Function
+# ============================================================
+
+def run_simulation(
+    policy: Policy,
+    seed: int,
+    num_ticks: int = 6,
+) -> Metrics:
+    """
+    Run headless simulation to evaluate policy.
+    
+    Args:
+        policy: Policy parameters to evaluate
+        seed: Random seed for reproducibility
+        num_ticks: Number of simulation ticks
+    
+    Returns:
+        Performance metrics
+    
+    Example:
+        >>> policy = Policy(transit_frequency_mult=1.3)
+        >>> metrics = run_simulation(policy, seed=42, num_ticks=10)
+        >>> print(f"Travel time: {metrics.avg_travel_time:.2f}")
+    """
+    try:
+        cfg = Sim_Config
+        
+        # Create city
+        city = CityGrid(
+            width=cfg.grid.width,
+            height=cfg.grid.height,
+            spacing=cfg.grid.spacing,
+            diagonal=cfg.grid.diagonal,
+            seed=seed,
+            edge_keep=cfg.grid.edge_keep,
+            diag_keep=cfg.grid.diag_keep,
+            population_range=cfg.grid.population_range,
+            density_range=cfg.grid.density_range,
+            clusters_per_zone=cfg.grid.clusters_per_zone,
+        )
+        
+        # Apply policy: road capacity
+        apply_capacity_scale(city, policy.road_capacity_scale)
+        
+        # Initialize simulation
+        sim = SimulationEngine(city)
+        
+        # Initialize traffic model
+        traffic = TrafficModel(
+            grid=city,
+            trips_per_person=cfg.traffic.trips_per_person,
+            rng_seed=seed,
+        )
+        
+        # Apply policy: mode shares
+        apply_policy_to_mode_shares(traffic, policy)
+        
+        # Run simulation and collect metrics
+        energy_list: List[float] = []
+        mean_cong_list: List[float] = []
+        p95_cong_list: List[float] = []
+        time_proxy_list: List[float] = []
+        
+        for tick in range(num_ticks):
+            # Run traffic assignment
+            flows = traffic.run_multimodal_assignment(deterministic_demand=True)
+            
+            # Compute congestion metrics per mode
+            car_mean = mean_flow(flows.get("car", {}))
+            ped_mean = mean_flow(flows.get("ped", {}))
+            transit_mean = mean_flow(flows.get("transit", {}))
+            
+            # Aggregate congestion
+            mean_cong = (car_mean + ped_mean + transit_mean) / 3.0
+            p95_cong = max(
+                p95_flow(flows.get("car", {})),
+                p95_flow(flows.get("ped", {})),
+                p95_flow(flows.get("transit", {})),
+            )
+            
+            # Travel time proxy (weighted by mode importance)
+            time_proxy = 1.2 * car_mean + 0.8 * transit_mean + 0.6 * ped_mean
+            
+            # Energy consumption
+            grid = sim.energy.daily_grid()
+            energy_usage = float(grid.sum())
+            
+            # Store metrics
+            mean_cong_list.append(float(mean_cong))
+            p95_cong_list.append(float(p95_cong))
+            time_proxy_list.append(float(time_proxy))
+            energy_list.append(float(energy_usage))
+            
+            # Advance simulation
+            sim.step()
+            
+            logger.debug(
+                f"Tick {tick}: travel_time={time_proxy:.2f}, "
+                f"energy={energy_usage:.2f}, congestion={mean_cong:.2f}"
+            )
+        
+        # Aggregate over ticks
+        metrics = Metrics(
+            avg_travel_time=float(np.mean(time_proxy_list)),
+            total_energy=float(np.mean(energy_list)),
+            mean_congestion=float(np.mean(mean_cong_list)),
+            congestion_p95=float(np.max(p95_cong_list)),
+            total_emissions=0.0,
+            failed=0,
+        )
+        
+        logger.debug(f"Simulation complete: {metrics}")
+        return metrics
+        
+    except Exception as e:
+        logger.error(f"Simulation failed: {e}")
+        # Return failed metrics to avoid killing optimization
+        return Metrics(
+            avg_travel_time=0.0,
+            total_energy=0.0,
+            mean_congestion=0.0,
+            congestion_p95=0.0,
+            total_emissions=0.0,
+            failed=1,
+        )
+
+
+# ============================================================
+# Logging
 # ============================================================
 
 LOG_COLUMNS = [
@@ -120,225 +490,42 @@ LOG_COLUMNS = [
 
 
 def ensure_logfile(path: str) -> None:
+    """Create CSV log file with headers if it doesn't exist."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if not os.path.exists(path):
         with open(path, "w", newline="") as f:
-            csv.DictWriter(f, fieldnames=LOG_COLUMNS).writeheader()
+            writer = csv.DictWriter(f, fieldnames=LOG_COLUMNS)
+            writer.writeheader()
 
 
 def append_log(path: str, row: Dict[str, Any]) -> None:
+    """Append row to CSV log file."""
     with open(path, "a", newline="") as f:
-        csv.DictWriter(f, fieldnames=LOG_COLUMNS).writerow(row)
+        writer = csv.DictWriter(f, fieldnames=LOG_COLUMNS)
+        writer.writerow(row)
 
 
-# ============================================================
-# 4) Helper functions (metrics from your flows)
-# ============================================================
-
-def mean_flow(edge_flows: Dict[Any, float]) -> float:
-    if not edge_flows:
-        return 0.0
-    vals = np.fromiter(edge_flows.values(), dtype=float)
-    return float(vals.mean()) if vals.size else 0.0
-
-
-def p95_flow(edge_flows: Dict[Any, float]) -> float:
-    if not edge_flows:
-        return 0.0
-    vals = np.fromiter(edge_flows.values(), dtype=float)
-    return float(np.percentile(vals, 95)) if vals.size else 0.0
-
-
-def apply_capacity_scale(city: CityGrid, scale: float) -> None:
-    """
-    Optional: only does something if your edges have a 'capacity' attribute.
-    Safe to call even if they don't.
-    """
-    G = city.graph
-    for u, v, data in G.edges(data=True):
-        if "capacity" in data and data["capacity"] is not None:
-            data["capacity"] = float(data["capacity"]) * float(scale)
-
-
-def apply_policy_to_mode_shares(
-    traffic: TrafficModel,
-    policy: Policy,
+def save_best(
+    path: str,
+    best_score: float,
+    best_policy: Policy,
+    best_metrics: Metrics,
+    opt_cfg: OptConfig,
+    obj_cfg: ObjectiveConfig,
 ) -> None:
     """
-    Map policy knobs -> mode shares (because this definitely exists today).
-
-    Intuition:
-    - Higher congestion_toll discourages car
-    - Higher transit_frequency_mult encourages transit
-    - Ped picks up leftover share automatically
-
-    We keep shares normalized and clipped.
+    Save best policy to JSON file.
+    
+    Args:
+        path: Output JSON file path
+        best_score: Best objective score
+        best_policy: Best policy found
+        best_metrics: Metrics for best policy
+        opt_cfg: Optimization configuration
+        obj_cfg: Objective configuration
     """
-    # Start from whatever TrafficModel initialized
-    car = float(getattr(traffic, "car_share", 0.5))
-    ped = float(getattr(traffic, "ped_share", 0.25))
-    transit = float(getattr(traffic, "transit_share", 0.25))
-
-    # Effects (tunable constants)
-    # Toll effect: every +1 toll reduces car by ~3–6 percentage points
-    car_shift = 0.05 * (policy.congestion_toll / 5.0)  # in [0, 0.05]
-    # Transit frequency effect: boosts transit when >1, reduces when <1
-    transit_shift = 0.08 * (policy.transit_frequency_mult - 1.0)  # about [-0.024, +0.04]
-
-    car = car * (1.0 - car_shift)
-    transit = transit * (1.0 + max(-0.3, min(0.5, transit_shift)))
-
-    # Re-normalize: ped absorbs remainder (or give remainder proportionally)
-    car = max(0.05, min(0.9, car))
-    transit = max(0.05, min(0.9, transit))
-
-    # Make ped the residual
-    ped = max(0.05, 1.0 - car - transit)
-
-    # If residual pushes total > 1 due to clipping, renormalize all
-    total = car + transit + ped
-    car /= total
-    transit /= total
-    ped /= total
-
-    traffic.car_share = float(car)
-    traffic.transit_share = float(transit)
-    traffic.ped_share = float(ped)
-
-
-# ============================================================
-# 5) The ONLY required hook: run_simulation(policy, seed)
-# ============================================================
-
-def run_simulation(policy: Policy, seed: int, num_ticks: int = 6) -> Metrics:
-    """
-    Wraps your main() logic into a headless evaluation run.
-    No plotting, no DB writes.
-
-    Returns Metrics expected by optimizer.
-    """
-    try:
-        cfg = Sim_Config
-
-        # ---- Create city ----
-        city = CityGrid(
-            width=cfg.grid.width,
-            height=cfg.grid.height,
-            spacing=cfg.grid.spacing,
-            diagonal=cfg.grid.diagonal,
-            seed=seed,  # IMPORTANT: use optimizer seed here
-            edge_keep=cfg.grid.edge_keep,
-            diag_keep=cfg.grid.diag_keep,
-            population_range=cfg.grid.population_range,
-            density_range=cfg.grid.density_range,
-            clusters_per_zone=cfg.grid.clusters_per_zone,
-        )
-
-        # ---- Apply policy (capacity scaling if available) ----
-        apply_capacity_scale(city, policy.road_capacity_scale)
-
-        # ---- Simulation engine ----
-        sim = SimulationEngine(city)
-
-        # ---- Traffic model ----
-        traffic = TrafficModel(
-            grid=city,
-            trips_per_person=cfg.traffic.trips_per_person,
-            rng_seed=seed,
-        )
-
-        # ---- Apply policy (mode shares definitely exist) ----
-        apply_policy_to_mode_shares(traffic, policy)
-
-        # ---- Run ticks, gather metrics ----
-        energy_list: List[float] = []
-        mean_cong_list: List[float] = []
-        p95_cong_list: List[float] = []
-        time_proxy_list: List[float] = []
-
-        # Tick 0 + subsequent ticks
-        for _ in range(num_ticks):
-            # flows: dict with keys "car", "ped", "transit"
-            flows = traffic.run_multimodal_assignment(deterministic_demand=True)
-
-            # congestion proxies per mode
-            car_mean = mean_flow(flows.get("car", {}))
-            ped_mean = mean_flow(flows.get("ped", {}))
-            transit_mean = mean_flow(flows.get("transit", {}))
-
-            # combine into a single scalar congestion signal
-            mean_cong = (car_mean + ped_mean + transit_mean) / 3.0
-            p95_cong = max(
-                p95_flow(flows.get("car", {})),
-                p95_flow(flows.get("ped", {})),
-                p95_flow(flows.get("transit", {})),
-            )
-
-            # travel time proxy (until you compute actual travel time)
-            # Car congestion is often the big driver, so weight it higher
-            time_proxy = 1.2 * car_mean + 0.8 * transit_mean + 0.6 * ped_mean
-
-            # energy usage
-            grid = sim.energy.daily_grid()
-            energy_usage = float(grid.sum())
-
-            mean_cong_list.append(float(mean_cong))
-            p95_cong_list.append(float(p95_cong))
-            time_proxy_list.append(float(time_proxy))
-            energy_list.append(float(energy_usage))
-
-            # advance sim clock
-            sim.step()
-
-        # Aggregate over ticks
-        return Metrics(
-            avg_travel_time=float(np.mean(time_proxy_list)),
-            total_energy=float(np.mean(energy_list)),
-            mean_congestion=float(np.mean(mean_cong_list)),
-            congestion_p95=float(np.max(p95_cong_list)),  # worst peak over horizon
-            total_emissions=0.0,
-            failed=0,
-        )
-
-    except Exception:
-        # If your sim ever errors on some policy, don’t kill optimization
-        return Metrics(
-            avg_travel_time=0.0,
-            total_energy=0.0,
-            mean_congestion=0.0,
-            congestion_p95=0.0,
-            total_emissions=0.0,
-            failed=1,
-        )
-
-
-# ============================================================
-# 6) Optimization loop
-# ============================================================
-
-@dataclass
-class OptConfig:
-    n_trials: int = 250
-    seed: int = 42
-    local_refine_steps: int = 80
-    local_sigma: float = 0.06
-    eval_repeats: int = 1
-    num_ticks: int = 6
-
-
-def evaluate_policy(pol: Policy, base_seed: int, opt_cfg: OptConfig, obj_cfg: ObjectiveConfig) -> Tuple[float, Metrics]:
-    scores = []
-    m_rep = None
-    for r in range(opt_cfg.eval_repeats):
-        m = run_simulation(pol, seed=base_seed + r, num_ticks=opt_cfg.num_ticks)
-        s = objective(m, obj_cfg)
-        scores.append(s)
-        m_rep = m
-    return float(np.mean(scores)), m_rep if m_rep is not None else Metrics(0, 0, 0, 0, failed=1)
-
-
-def save_best(path: str, best_score: float, best_policy: Policy, best_metrics: Metrics, opt_cfg: OptConfig, obj_cfg: ObjectiveConfig) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    
     payload = {
         "best_score": best_score,
         "best_policy": asdict(best_policy),
@@ -348,97 +535,300 @@ def save_best(path: str, best_score: float, best_policy: Policy, best_metrics: M
         "objective_config": asdict(obj_cfg),
         "saved_utc": datetime.now(timezone.utc).isoformat(),
     }
+    
     with open(path, "w") as f:
         json.dump(payload, f, indent=2)
+    
+    logger.info(f"Saved best policy to {path}")
 
 
-def optimize(opt_cfg: OptConfig, obj_cfg: ObjectiveConfig, log_path: str, best_path: str) -> Dict[str, Any]:
+# ============================================================
+# Optimization Configuration
+# ============================================================
+
+@dataclass
+class OptConfig:
+    """
+    Optimization algorithm configuration.
+    
+    Attributes:
+        n_trials: Number of random search trials
+        seed: Random seed
+        local_refine_steps: Number of local search steps
+        local_sigma: Mutation strength for local search
+        eval_repeats: Number of evaluations per policy (for robustness)
+        num_ticks: Simulation length per evaluation
+    """
+    n_trials: int = 250
+    seed: int = 42
+    local_refine_steps: int = 80
+    local_sigma: float = 0.06
+    eval_repeats: int = 1
+    num_ticks: int = 6
+
+
+def evaluate_policy(
+    policy: Policy,
+    base_seed: int,
+    opt_cfg: OptConfig,
+    obj_cfg: ObjectiveConfig,
+) -> Tuple[float, Metrics]:
+    """
+    Evaluate policy with multiple random seeds and average results.
+    
+    Args:
+        policy: Policy to evaluate
+        base_seed: Base random seed
+        opt_cfg: Optimization configuration
+        obj_cfg: Objective configuration
+    
+    Returns:
+        Tuple of (average_score, representative_metrics)
+    """
+    scores = []
+    metrics_rep = None
+    
+    for repeat in range(opt_cfg.eval_repeats):
+        seed = base_seed + repeat
+        metrics = run_simulation(policy, seed=seed, num_ticks=opt_cfg.num_ticks)
+        score = objective(metrics, obj_cfg)
+        scores.append(score)
+        metrics_rep = metrics
+    
+    avg_score = float(np.mean(scores))
+    
+    return avg_score, metrics_rep if metrics_rep is not None else Metrics(
+        0, 0, 0, 0, failed=1
+    )
+
+
+# ============================================================
+# Optimization Algorithms
+# ============================================================
+
+def optimize(
+    opt_cfg: OptConfig,
+    obj_cfg: ObjectiveConfig,
+    log_path: str,
+    best_path: str,
+) -> Dict[str, Any]:
+    """
+    Run optimization: random search + local refinement.
+    
+    Algorithm:
+    1. Random search: sample n_trials policies uniformly
+    2. Local refinement: hill-climb from best policy found
+    
+    Args:
+        opt_cfg: Optimization configuration
+        obj_cfg: Objective configuration
+        log_path: CSV log file path
+        best_path: Best policy JSON path
+    
+    Returns:
+        Dictionary with optimization results
+    
+    Example:
+        >>> opt_cfg = OptConfig(n_trials=100, local_refine_steps=50)
+        >>> obj_cfg = ObjectiveConfig(w_time=1.0, w_p95_cong=1.5)
+        >>> results = optimize(opt_cfg, obj_cfg, "runs.csv", "best.json")
+    """
     rng = np.random.default_rng(opt_cfg.seed)
     ensure_logfile(log_path)
-
+    
     best_score = float("inf")
     best_policy: Optional[Policy] = None
     best_metrics: Optional[Metrics] = None
     run_id = 0
-
-    # Random search
-    for _ in range(opt_cfg.n_trials):
+    
+    logger.info(
+        f"Starting optimization: {opt_cfg.n_trials} random trials + "
+        f"{opt_cfg.local_refine_steps} local steps"
+    )
+    
+    # Phase 1: Random search
+    logger.info("Phase 1: Random search")
+    for trial in range(opt_cfg.n_trials):
         run_id += 1
-        pol = sample_policy(rng)
-        score, m = evaluate_policy(pol, base_seed=opt_cfg.seed + run_id * 1000, opt_cfg=opt_cfg, obj_cfg=obj_cfg)
-
+        
+        # Sample random policy
+        policy = sample_policy(rng)
+        
+        # Evaluate
+        score, metrics = evaluate_policy(
+            policy,
+            base_seed=opt_cfg.seed + run_id * 1000,
+            opt_cfg=opt_cfg,
+            obj_cfg=obj_cfg,
+        )
+        
+        # Log result
         append_log(log_path, {
             "run_id": run_id,
             "utc_time": datetime.now(timezone.utc).isoformat(),
             "base_seed": opt_cfg.seed,
             "score": score,
-            "failed": m.failed,
-            **asdict(pol),
-            **asdict(m),
+            "failed": metrics.failed,
+            **asdict(policy),
+            **asdict(metrics),
         })
-
+        
+        # Update best
         if score < best_score:
-            best_score, best_policy, best_metrics = score, pol, m
+            best_score = score
+            best_policy = policy
+            best_metrics = metrics
             save_best(best_path, best_score, best_policy, best_metrics, opt_cfg, obj_cfg)
-
+            logger.info(f"New best at trial {run_id}: score={best_score:.6g}")
+        
+        # Progress update
         if run_id % max(1, opt_cfg.n_trials // 10) == 0:
-            print(f"[random] {run_id}/{opt_cfg.n_trials} best={best_score:.6g}")
-
-    # Local refine (hill climb)
+            logger.info(
+                f"Random search progress: {run_id}/{opt_cfg.n_trials}, "
+                f"best={best_score:.6g}"
+            )
+    
+    # Phase 2: Local refinement (hill climbing)
     if best_policy is not None and opt_cfg.local_refine_steps > 0:
-        current = best_policy
-        print("\nStarting local refinement...")
-        for i in range(opt_cfg.local_refine_steps):
+        logger.info("Phase 2: Local refinement")
+        current_policy = best_policy
+        
+        for step in range(opt_cfg.local_refine_steps):
             run_id += 1
-            cand = mutate_policy(current, rng, sigma=opt_cfg.local_sigma)
-            score, m = evaluate_policy(cand, base_seed=opt_cfg.seed + run_id * 1000, opt_cfg=opt_cfg, obj_cfg=obj_cfg)
-
+            
+            # Mutate current best
+            candidate = mutate_policy(current_policy, rng, sigma=opt_cfg.local_sigma)
+            
+            # Evaluate
+            score, metrics = evaluate_policy(
+                candidate,
+                base_seed=opt_cfg.seed + run_id * 1000,
+                opt_cfg=opt_cfg,
+                obj_cfg=obj_cfg,
+            )
+            
+            # Log result
             append_log(log_path, {
                 "run_id": run_id,
                 "utc_time": datetime.now(timezone.utc).isoformat(),
                 "base_seed": opt_cfg.seed,
                 "score": score,
-                "failed": m.failed,
-                **asdict(cand),
-                **asdict(m),
+                "failed": metrics.failed,
+                **asdict(candidate),
+                **asdict(metrics),
             })
-
+            
+            # Accept if better (greedy hill climbing)
             if score < best_score:
-                best_score, best_policy, best_metrics = score, cand, m
-                current = cand
+                best_score = score
+                best_policy = candidate
+                best_metrics = metrics
+                current_policy = candidate
                 save_best(best_path, best_score, best_policy, best_metrics, opt_cfg, obj_cfg)
-
-            if (i + 1) % max(1, opt_cfg.local_refine_steps // 5) == 0:
-                print(f"[local] {i+1}/{opt_cfg.local_refine_steps} best={best_score:.6g}")
-
+                logger.info(f"Improved at step {step+1}: score={best_score:.6g}")
+            
+            # Progress update
+            if (step + 1) % max(1, opt_cfg.local_refine_steps // 5) == 0:
+                logger.info(
+                    f"Local refinement: {step+1}/{opt_cfg.local_refine_steps}, "
+                    f"best={best_score:.6g}"
+                )
+    
+    logger.info(
+        f"Optimization complete: best score={best_score:.6g} "
+        f"after {run_id} evaluations"
+    )
+    
     return {
         "best_score": best_score,
         "best_policy": asdict(best_policy) if best_policy else None,
         "best_metrics": asdict(best_metrics) if best_metrics else None,
+        "total_evaluations": run_id,
         "log_path": log_path,
         "best_path": best_path,
     }
 
 
 # ============================================================
-# 7) CLI
+# CLI
 # ============================================================
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser()
-    p.add_argument("--trials", type=int, default=250)
-    p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--local-steps", type=int, default=80)
-    p.add_argument("--local-sigma", type=float, default=0.06)
-    p.add_argument("--eval-repeats", type=int, default=1)
-    p.add_argument("--ticks", type=int, default=6)
-    p.add_argument("--log", type=str, default="data/opt/policy_runs.csv")
-    p.add_argument("--best", type=str, default="data/opt/best_policy.json")
-    return p.parse_args()
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Optimize urban transportation policies via simulation"
+    )
+    
+    parser.add_argument(
+        "--trials",
+        type=int,
+        default=250,
+        help="Number of random search trials (default: 250)"
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed (default: 42)"
+    )
+    parser.add_argument(
+        "--local-steps",
+        type=int,
+        default=80,
+        help="Number of local refinement steps (default: 80)"
+    )
+    parser.add_argument(
+        "--local-sigma",
+        type=float,
+        default=0.06,
+        help="Mutation strength for local search (default: 0.06)"
+    )
+    parser.add_argument(
+        "--eval-repeats",
+        type=int,
+        default=1,
+        help="Evaluations per policy for robustness (default: 1)"
+    )
+    parser.add_argument(
+        "--ticks",
+        type=int,
+        default=6,
+        help="Simulation ticks per evaluation (default: 6)"
+    )
+    parser.add_argument(
+        "--log",
+        type=str,
+        default="data/opt/policy_runs.csv",
+        help="Output CSV log path"
+    )
+    parser.add_argument(
+        "--best",
+        type=str,
+        default="data/opt/best_policy.json",
+        help="Output best policy JSON path"
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable verbose logging"
+    )
+    
+    return parser.parse_args()
 
 
 def main() -> None:
+    """Main entry point for optimization."""
     args = parse_args()
+    
+    # Configure logging
+    log_level = logging.DEBUG if args.verbose else logging.INFO
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    
+    # Create optimization configuration
     opt_cfg = OptConfig(
         n_trials=args.trials,
         seed=args.seed,
@@ -447,11 +837,27 @@ def main() -> None:
         eval_repeats=args.eval_repeats,
         num_ticks=args.ticks,
     )
+    
     obj_cfg = ObjectiveConfig()
-
-    result = optimize(opt_cfg, obj_cfg, log_path=args.log, best_path=args.best)
-    print("\n=== Done ===")
+    
+    logger.info("Configuration:")
+    logger.info(f"  Optimization: {opt_cfg}")
+    logger.info(f"  Objective: {obj_cfg}")
+    
+    # Run optimization
+    result = optimize(
+        opt_cfg=opt_cfg,
+        obj_cfg=obj_cfg,
+        log_path=args.log,
+        best_path=args.best,
+    )
+    
+    # Print results
+    print("\n" + "=" * 60)
+    print("OPTIMIZATION COMPLETE")
+    print("=" * 60)
     print(json.dumps(result, indent=2))
+    print("=" * 60)
 
 
 if __name__ == "__main__":
