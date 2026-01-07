@@ -220,13 +220,13 @@ def save_histogram(
     """
     plt.figure(figsize=figsize)
     
-    scores = df["score"].values
+    scores = df["score"].values  # This is already a numpy array
     plt.hist(scores, bins=bins, color="steelblue", edgecolor="black", alpha=0.7)
     
     # Add vertical lines for statistics
-    plt.axvline(scores.min(), color="green", linestyle="--", linewidth=2, label="Best")
-    plt.axvline(np.median(scores), color="orange", linestyle="--", linewidth=2, label="Median")
-    plt.axvline(scores.mean(), color="red", linestyle="--", linewidth=2, label="Mean")
+    plt.axvline(float(scores.min()), color="green", linestyle="--", linewidth=2, label="Best")
+    plt.axvline(float(np.median(scores)), color="orange", linestyle="--", linewidth=2, label="Median")
+    plt.axvline(float(scores.mean()), color="red", linestyle="--", linewidth=2, label="Mean")
     
     plt.xlabel("Score", fontsize=12)
     plt.ylabel("Count", fontsize=12)
@@ -282,8 +282,8 @@ def save_knob_relationships(
         
         plt.figure(figsize=figsize)
         
-        # Scatter plot
-        plt.scatter(x.values, y.values, s=20, alpha=0.4, color="steelblue")
+        # Scatter plot - x and y are already pandas Series
+        plt.scatter(x.to_numpy(), y.to_numpy(), s=20, alpha=0.4, color="steelblue")
         
         # Binned mean curve
         try:
@@ -295,8 +295,8 @@ def save_knob_relationships(
             x_mean = grouped["x"].mean()
             y_mean = grouped["y"].mean()
             plt.plot(
-                x_mean.values,
-                y_mean.values,
+                x_mean.to_numpy(),
+                y_mean.to_numpy(),
                 color="darkred",
                 linewidth=2,
                 marker="o",

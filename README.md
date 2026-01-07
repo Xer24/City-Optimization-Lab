@@ -1,87 +1,87 @@
-Optimization Experiments
-Problem formulation
+# City Optimization Lab
+Simulation-Based Policy Optimization for Urban Traffic Systems
 
-We frame urban traffic management as a simulation-based optimization problem.
-The goal is to select policy parameters that minimize a weighted objective combining congestion and energy usage.
+## Overview
 
-Decision variables
+City Optimization Lab is a simulation-based optimization framework for urban traffic management. The system models a multi-modal city environment and searches over policy parameters to reduce congestion and energy usage.
 
-Transit frequency multiplier
+Rather than relying on analytical gradients or closed-form assumptions, policies are evaluated directly through simulation. This allows the framework to handle complex, non-linear dynamics while remaining flexible and extensible.
 
-Congestion toll level
+The project emphasizes:
+- Black-box policy optimization
+- Interpretability of policy effects
+- Reproducible experimentation
+- A modular architecture suitable for future ML extensions
 
-Road capacity scaling factor
+---
 
-Objective
-A weighted sum of:
+## Problem Formulation
 
-system travel-time proxy
+Urban traffic management is framed as a simulation-driven optimization problem.
 
-total energy usage
+The goal is to select policy parameters that minimize a weighted objective combining congestion and energy-related metrics. Lower objective values indicate better overall system performance.
 
-mean congestion
+---
 
-peak (95th percentile) congestion
+## Decision Variables
 
-Lower objective values indicate better overall system performance.
+The optimizer searches over the following policy controls:
 
-Method
+- **Transit frequency multiplier**  
+  Scales public transit availability across the city.
 
-Policies are evaluated by running a multi-modal city simulation over multiple ticks.
+- **Congestion toll level**  
+  Applies pricing to road usage to influence travel demand.
 
-A random search with local refinement explores the policy space.
+- **Road capacity scaling factor**  
+  Adjusts effective roadway throughput.
 
-Each trial logs policy parameters and resulting performance metrics.
+Each policy configuration represents a candidate intervention applied uniformly across the simulation.
 
-The best policy is selected based on minimum objective value.
+---
 
-Performance is validated against a neutral baseline policy under identical conditions.
+## Objective Function
 
-Results
+The objective is defined as a weighted sum of system-level metrics:
 
-The optimizer consistently finds policies that outperform the baseline.
+- System travel-time proxy  
+- Total energy usage  
+- Mean congestion  
+- Peak congestion (95th percentile)
 
-Key diagnostics:
+This formulation balances efficiency, sustainability, and robustness to extreme congestion events.
 
-Best-so-far curve shows monotonic improvement over trials.
+---
 
-Score histogram confirms a meaningful spread of policy quality.
+## Optimization Method
 
-Policy knob vs score plots reveal interpretable relationships between controls and outcomes.
+Policies are evaluated by running a multi-modal city simulation over multiple time steps.
 
-Artifacts:
+The optimization loop consists of:
+- Randomized policy sampling
+- Local refinement around promising regions
+- Logging of policy parameters and outcome metrics for every trial
 
-data/opt/analysis/best_so_far.png
+The best policy is selected based on the minimum objective value observed.
 
-data/opt/analysis/score_hist.png
+Performance is validated against a neutral baseline policy evaluated under identical simulation conditions.
 
-data/opt/analysis/knobs/
+---
 
-The optimized policy achieves lower congestion and energy usage than baseline across evaluation runs.
+## Results
 
-Reproducibility
+The optimizer consistently identifies policies that outperform the baseline.
 
-To reproduce results:
+Key diagnostics include:
+- **Best-so-far curves** showing monotonic improvement across trials
+- **Score histograms** demonstrating a meaningful spread in policy quality
+- **Policy knob vs. score plots** revealing interpretable relationships between controls and outcomes
 
-# run optimization
-PYTHONPATH=src python src/optimization/optimizer.py
+The optimized policy achieves lower congestion and reduced energy usage across evaluation runs.
 
-# analyze results
-python src/optimization/analyze_runs.py
+---
 
-# evaluate baseline vs best
-PYTHONPATH=src python src/optimization/evaluate_policy.py
+## Artifacts
 
+All optimization outputs are saved under:
 
-All optimization data and plots are saved under data/opt/.
-
-Notes
-
-This framework is intentionally modular.
-Machine learning surrogates can be added later to accelerate policy search, but are not required for optimization correctness.
-
-3️⃣ One-paragraph project summary (for applications / portfolio)
-
-Use this anywhere (resume bullets, project description, GitHub):
-
-Built a simulation-based optimization framework for urban traffic systems. Policies controlling transit frequency, congestion pricing, and road capacity were optimized using black-box search over a multi-modal city simulation. Results were validated against a neutral baseline, showing consistent reductions in congestion and energy usage. The system logs structured policy–outcome data and produces diagnostic plots for interpretability and future ML integration.
